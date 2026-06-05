@@ -224,6 +224,9 @@ class MainWindow(QWidget):
         self.ssid_edit = QLineEdit(); self.ssid_edit.setPlaceholderText("Camera WiFi SSID")
         self.pw_edit = QLineEdit(); self.pw_edit.setPlaceholderText("Password")
         self.pw_edit.setEchoMode(QLineEdit.Password)
+        # Enter in either field triggers Connect.
+        self.ssid_edit.returnPressed.connect(self._toggle_connect)
+        self.pw_edit.returnPressed.connect(self._toggle_connect)
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self._toggle_connect)
         self.status_dot = QLabel("●"); self.status_dot.setStyleSheet("color:#c0392b;")
@@ -314,11 +317,33 @@ class MainWindow(QWidget):
         if self._connected:
             self.worker.req_disconnect.emit("")
             self.connect_btn.setEnabled(False)
-        else:
-            self.connect_btn.setEnabled(False)
-            self.connect_btn.setText("Connecting…")
-            self.worker.req_connect.emit(self.ssid_edit.text().strip(),
-                                         self.pw_edit.text(), "")
+            return
+
+        ssid = self.ssid_edit.text().strip()
+        password = self.pw_edit.text()
+
+        # Require SSID + password before trying to join the camera's WiFi.
+        # (Skipped only when OMSHARE_HOST is set, e.g. for testing against a
+        # camera you're already connected to, or the mock server.)
+        if not os.environ.get("OMSHARE_HOST"):
+            if not ssid:
+                QMessageBox.information(
+                    self, "Camera SSID needed",
+                    "Enter the camera's WiFi network name (SSID). It's shown on "
+                    "the camera screen under Connection to Smartphone.")
+                self.ssid_edit.setFocus()
+                return
+            if not password:
+                QMessageBox.information(
+                    self, "Password needed",
+                    "Enter the camera's WiFi password. It's shown on the camera "
+                    "screen next to the SSID.")
+                self.pw_edit.setFocus()
+                return
+
+        self.connect_btn.setEnabled(False)
+        self.connect_btn.setText("Connecting…")
+        self.worker.req_connect.emit(ssid, password, "")
 
     def _format_enabled(self, file_name: str) -> bool:
         """True if this file's format is currently shown (uncategorized always shown)."""

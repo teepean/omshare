@@ -34,6 +34,35 @@ def _pump(app, cond, timeout=20):
     return False
 
 
+def test_gui_requires_ssid_and_password(monkeypatch):
+    """Connecting by WiFi must prompt for both SSID and password."""
+    monkeypatch.delenv("OMSHARE_HOST", raising=False)  # force the WiFi path
+    import omshare.gui as gui
+
+    app = QApplication.instance() or QApplication([])
+    prompts = []
+    # Stub the modal dialog so the test doesn't block, and record the title.
+    monkeypatch.setattr(gui.QMessageBox, "information",
+                        lambda *a, **k: prompts.append(a[1] if len(a) > 1 else ""))
+    win = gui.MainWindow()
+    try:
+        # Nothing entered -> asks for the SSID, does not attempt to connect.
+        win.ssid_edit.setText("")
+        win.pw_edit.setText("")
+        win._toggle_connect()
+        assert prompts and "SSID" in prompts[-1]
+        assert win.connect_btn.text() == "Connect" and not win._connected
+
+        # SSID but no password -> asks for the password.
+        win.ssid_edit.setText("E-M10II-ABC123")
+        win.pw_edit.setText("")
+        win._toggle_connect()
+        assert "Password" in prompts[-1]
+        assert win.connect_btn.text() == "Connect" and not win._connected
+    finally:
+        win.close()
+
+
 def test_gui_connect_browse_download(tmp_path):
     httpd = mock_camera.serve()
     port = httpd.server_address[1]
