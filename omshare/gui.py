@@ -238,11 +238,21 @@ class MainWindow(QWidget):
         conn.addWidget(self.status_dot)
         conn.addWidget(self.status_text, 1)
         root.addLayout(conn)
+
+        # "Use current Wi-Fi connection" — for a camera you've already joined
+        # through the OS Wi-Fi menu. Skips the SSID/password join step and just
+        # talks to the camera at its fixed address.
+        self.use_current_cb = QCheckBox(
+            "Use current Wi-Fi connection (I've already joined the camera)")
+        self.use_current_cb.toggled.connect(self._on_use_current_toggled)
+        root.addWidget(self.use_current_cb)
+
         if os.environ.get("OMSHARE_HOST"):
             self.ssid_edit.setPlaceholderText(
                 f"(using OMSHARE_HOST={os.environ['OMSHARE_HOST']})")
             self.ssid_edit.setEnabled(False)
             self.pw_edit.setEnabled(False)
+            self.use_current_cb.setEnabled(False)
 
         # Destination row
         dest = QHBoxLayout()
@@ -313,6 +323,11 @@ class MainWindow(QWidget):
         w.disconnected.connect(self._on_disconnected)
 
     # -- UI actions --------------------------------------------------------- #
+    def _on_use_current_toggled(self, checked: bool):
+        """Gray out SSID/password when reusing an already-joined connection."""
+        self.ssid_edit.setEnabled(not checked)
+        self.pw_edit.setEnabled(not checked)
+
     def _toggle_connect(self):
         if self._connected:
             self.worker.req_disconnect.emit("")
@@ -321,16 +336,21 @@ class MainWindow(QWidget):
 
         ssid = self.ssid_edit.text().strip()
         password = self.pw_edit.text()
+        use_current = self.use_current_cb.isChecked()
 
         # Require SSID + password before trying to join the camera's WiFi.
-        # (Skipped only when OMSHARE_HOST is set, e.g. for testing against a
-        # camera you're already connected to, or the mock server.)
-        if not os.environ.get("OMSHARE_HOST"):
+        # Skipped when OMSHARE_HOST is set (testing / explicit host) or when
+        # "Use current Wi-Fi connection" is ticked (camera already joined via
+        # the OS) — in that case we connect with no SSID and the worker talks
+        # to the camera at its fixed address.
+        if not os.environ.get("OMSHARE_HOST") and not use_current:
             if not ssid:
                 QMessageBox.information(
                     self, "Camera SSID needed",
-                    "Enter the camera's WiFi network name (SSID). It's shown on "
-                    "the camera screen under Connection to Smartphone.")
+                    "Enter the camera's WiFi network name (SSID), or tick "
+                    "\"Use current Wi-Fi connection\" if you've already joined "
+                    "the camera. The SSID is shown on the camera screen under "
+                    "Connection to Smartphone.")
                 self.ssid_edit.setFocus()
                 return
             if not password:
@@ -340,6 +360,9 @@ class MainWindow(QWidget):
                     "screen next to the SSID.")
                 self.pw_edit.setFocus()
                 return
+
+        if use_current:
+            ssid, password = "", ""
 
         self.connect_btn.setEnabled(False)
         self.connect_btn.setText("Connecting…")

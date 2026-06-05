@@ -63,6 +63,40 @@ def test_gui_requires_ssid_and_password(monkeypatch):
         win.close()
 
 
+def test_gui_use_current_wifi_skips_ssid(monkeypatch):
+    """Ticking 'Use current Wi-Fi connection' connects with no SSID/password."""
+    monkeypatch.delenv("OMSHARE_HOST", raising=False)  # force the WiFi path
+    import omshare.gui as gui
+
+    app = QApplication.instance() or QApplication([])
+    prompts = []
+    monkeypatch.setattr(gui.QMessageBox, "information",
+                        lambda *a, **k: prompts.append(a[1] if len(a) > 1 else ""))
+    win = gui.MainWindow()
+    try:
+        # Replace the real (network-touching) connect handler with a recorder.
+        win.worker.req_connect.disconnect()
+        captured = []
+        win.worker.req_connect.connect(
+            lambda s, p, i: captured.append((s, p, i)))
+
+        # Ticking the box disables the SSID/password fields.
+        win.use_current_cb.setChecked(True)
+        assert not win.ssid_edit.isEnabled()
+        assert not win.pw_edit.isEnabled()
+
+        # Connect with blank fields: no prompt, and connect requested with
+        # empty credentials (so the worker uses the already-joined camera).
+        win.ssid_edit.setText("")
+        win.pw_edit.setText("")
+        win._toggle_connect()
+        assert _pump(app, lambda: bool(captured)), "connect was not requested"
+        assert not prompts, "should not prompt when using current Wi-Fi"
+        assert captured == [("", "", "")]
+    finally:
+        win.close()
+
+
 def test_gui_connect_browse_download(tmp_path):
     httpd = mock_camera.serve()
     port = httpd.server_address[1]
