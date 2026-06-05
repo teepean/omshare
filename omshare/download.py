@@ -8,10 +8,19 @@ date-organized output folders, extension/date filters, and a progress summary.
 import datetime
 import os
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 
+import requests
 from olympuswifi.camera import OlympusCamera, ResultError
+
+# Per-file network timeouts (seconds): (connect, read). The camera drops WiFi to
+# standby after ~1 min idle; without a read timeout a stalled transfer would hang
+# forever. With it, a sleeping camera raises and the caller can retry/resume.
+_CONNECT_TIMEOUT = 5.0
+_READ_TIMEOUT = 30.0
+_CHUNK = 128 * 1024
 
 
 @dataclass
@@ -67,6 +76,40 @@ def _local_path(fd, output_dir: str, organize: str) -> str:
     return os.path.join(output_dir, sub, name)
 
 
+def _render_bar(prefix: str, name: str, got: int, total: int, speed: float) -> None:
+    """Draw an in-place progress bar on stderr (interactive use only)."""
+    width = 24
+    frac = min(max(got / total, 0.0), 1.0) if total else 0.0
+    bar = "#" * int(width * frac) + "-" * (width - int(width * frac))
+    spd = f"{_human(int(speed))}/s" if speed > 0 else "--"
+    sys.stderr.write(
+        f"\r{prefix} [{bar}] {frac * 100:5.1f}%  "
+        f"{_human(got)}/{_human(total)}  {spd}  {name}\033[K"
+    )
+    sys.stderr.flush()
+
+
+def _stream_to_file(camera: OlympusCamera, fd, tmp_path: str,
+                    on_progress: Callable[[int], None]) -> int:
+    """Stream one camera file to `tmp_path` in chunks. Returns bytes written.
+
+    Uses an explicit (connect, read) timeout so a camera that drops to standby
+    mid-transfer raises requests.RequestException instead of hanging forever.
+    """
+    url = camera.URL_PREFIX + fd.file_name.lstrip("/")
+    got = 0
+    with requests.get(url, headers=camera.HEADERS, stream=True,
+                      timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT)) as r:
+        r.raise_for_status()
+        with open(tmp_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=_CHUNK):
+                if chunk:
+                    f.write(chunk)
+                    got += len(chunk)
+                    on_progress(got)
+    return got
+
+
 def _already_have(local_file: str, fd) -> bool:
     if not os.path.exists(local_file):
         return False
@@ -110,27 +153,45 @@ def download(
             continue
 
         os.makedirs(os.path.dirname(local_file) or ".", exist_ok=True)
+        tmp = local_file + ".part"
+        name = os.path.basename(local_file)
+        interactive = sys.stderr.isatty()
+        t0 = time.time()
+        last = [0.0]
+
+        def on_progress(got: int) -> None:
+            if not interactive:
+                return
+            now = time.time()
+            if got < fd.file_size and now - last[0] < 0.1:  # ~10 updates/sec
+                return
+            last[0] = now
+            speed = got / (now - t0) if now > t0 else 0.0
+            _render_bar(prefix, name, got, fd.file_size, speed)
+
         try:
-            data = camera.download_image(fd.file_name)
-            if data is None or len(data) != fd.file_size:
+            got = _stream_to_file(camera, fd, tmp, on_progress)
+            if interactive:
+                sys.stderr.write("\r\033[K")  # clear the progress line
+                sys.stderr.flush()
+            if got != fd.file_size:
                 raise IOError(
-                    f"size mismatch (got {0 if data is None else len(data)}, "
-                    f"expected {fd.file_size})"
-                )
-            tmp = local_file + ".part"
-            with open(tmp, "wb") as f:
-                f.write(data)
+                    f"size mismatch (got {got}, expected {fd.file_size})")
             os.replace(tmp, local_file)
             dt = datetime.datetime.strptime(fd.date_time, "%Y-%m-%dT%H:%M:%S")
             os.utime(local_file, (dt.timestamp(), dt.timestamp()))
             stats["downloaded"] += 1
             stats["bytes"] += fd.file_size
             log(f"{prefix} get    {rel}  ({_human(fd.file_size)})")
-        except (ResultError, IOError, OSError) as e:
+        except (ResultError, IOError, OSError,
+                requests.RequestException) as e:
+            if interactive:
+                sys.stderr.write("\r\033[K")
+                sys.stderr.flush()
             stats["failed"] += 1
             log(f"{prefix} FAIL   {fd.file_name}: {e}")
             try:
-                os.remove(local_file + ".part")
+                os.remove(tmp)
             except OSError:
                 pass
 
