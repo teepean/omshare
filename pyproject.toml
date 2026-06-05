@@ -24,12 +24,18 @@ dependencies = [
     "requests",
 ]
 
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+
 [project.urls]
 Homepage = "https://github.com/teepean/omshare"
 Repository = "https://github.com/teepean/omshare"
 
 [project.scripts]
 omshare = "omshare.cli:main"
+
+[project.gui-scripts]
+omshare-gui = "omshare.gui:main"
 
 [tool.setuptools]
 packages = ["omshare"]

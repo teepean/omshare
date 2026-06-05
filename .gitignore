@@ -18,3 +18,7 @@ env/
 
 # OS
 .DS_Store
+
+# PyInstaller build venv & specs
+.build-venv/
+*.spec

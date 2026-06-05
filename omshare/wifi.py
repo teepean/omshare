@@ -35,6 +35,7 @@ CON_PREFIX = "omshare-"
 
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
+IS_WINDOWS = sys.platform.startswith("win")
 
 
 class WifiError(Exception):
@@ -319,6 +320,127 @@ class _DarwinBackend:
             "by SSID with: omshare connect --ssid <SSID> --password <PW>.")
 
 
+# =========================================================================== #
+#  Windows backend (netsh wlan)
+# =========================================================================== #
+
+def windows_profile_xml(ssid: str, password: str) -> str:
+    """Build a WPA2-PSK/AES WLAN profile XML for `netsh wlan add profile`."""
+    from xml.sax.saxutils import escape
+    s, p = escape(ssid), escape(password)
+    return (
+        '<?xml version="1.0"?>\n'
+        '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
+        f'  <name>{s}</name>\n'
+        f'  <SSIDConfig><SSID><name>{s}</name></SSID></SSIDConfig>\n'
+        '  <connectionType>ESS</connectionType>\n'
+        '  <connectionMode>manual</connectionMode>\n'
+        '  <MSM><security>\n'
+        '    <authEncryption><authentication>WPA2PSK</authentication>'
+        '<encryption>AES</encryption><useOneX>false</useOneX></authEncryption>\n'
+        '    <sharedKey><keyType>passPhrase</keyType><protected>false</protected>'
+        f'<keyMaterial>{p}</keyMaterial></sharedKey>\n'
+        '  </security></MSM>\n'
+        '</WLANProfile>\n'
+    )
+
+
+class _WindowsBackend:
+    HINT = "'netsh' is part of Windows; this should not happen."
+
+    def _netsh(self, *args: str, check: bool = True, timeout: int = 60):
+        return _run(["netsh", *args], check=check, timeout=timeout,
+                    tool_hint=self.HINT)
+
+    @staticmethod
+    def parse_interfaces(text: str) -> List["WifiDevice"]:
+        """Parse `netsh wlan show interfaces` into a WifiDevice list.
+
+        Each interface block has 'Name', 'State', and (when associated) 'SSID'.
+        """
+        devices: List[WifiDevice] = []
+        name, state, ssid = None, "", "--"
+        for line in text.splitlines():
+            if ":" not in line:
+                continue
+            key, val = (p.strip() for p in line.split(":", 1))
+            kl = key.lower()
+            if kl == "name":
+                if name is not None:
+                    devices.append(WifiDevice(name, state, ssid))
+                name, state, ssid = val, "", "--"
+            elif kl == "state" and name is not None:
+                state = val
+            elif kl == "ssid" and name is not None and val:
+                ssid = val
+        if name is not None:
+            devices.append(WifiDevice(name, state, ssid))
+        return devices
+
+    def list_wifi_devices(self) -> List[WifiDevice]:
+        cp = self._netsh("wlan", "show", "interfaces", check=False)
+        return self.parse_interfaces(cp.stdout)
+
+    def pick_wifi_iface(self, preferred: Optional[str] = None) -> str:
+        devices = self.list_wifi_devices()
+        names = [d.device for d in devices]
+        if preferred:
+            if preferred in names:
+                return preferred
+            raise WifiError(
+                f"WiFi interface '{preferred}' not found. "
+                f"Available: {', '.join(names) or 'none'}.")
+        if not names:
+            raise WifiError(_NO_ADAPTER_MSG)
+        return names[0]
+
+    def connect(self, ssid: str, password: str, iface: Optional[str],
+                wait_secs: int) -> str:
+        import os
+        import tempfile
+        iface = self.pick_wifi_iface(iface)
+        xml = windows_profile_xml(ssid, password)
+        fd, path = tempfile.mkstemp(suffix=".xml", prefix="omshare-wlan-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(xml)
+            self._netsh("wlan", "add", "profile", f"filename={path}",
+                        f"interface={iface}", "user=current")
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        cp = self._netsh("wlan", "connect", f"name={ssid}", f"ssid={ssid}",
+                         f"interface={iface}", check=False)
+        msg = (cp.stdout + cp.stderr).strip()
+        if cp.returncode != 0 or "completed successfully" not in msg.lower():
+            # Not fatal yet — fall through to the reachability wait, but surface
+            # the message if the camera never answers.
+            pass
+        _wait_for_camera(ssid, wait_secs)
+        return ssid
+
+    def disconnect(self, ssid: Optional[str]) -> None:
+        ifaces = [d.device for d in self.list_wifi_devices()]
+        for iface in ifaces or [None]:
+            args = ["wlan", "disconnect"]
+            if iface:
+                args.append(f"interface={iface}")
+            self._netsh(*args, check=False)
+        if ssid:
+            self._netsh("wlan", "delete", "profile", f"name={ssid}", check=False)
+
+    def scan(self, iface: Optional[str]) -> List[str]:
+        cp = self._netsh("wlan", "show", "networks", check=False)
+        out = []
+        for line in cp.stdout.splitlines():
+            line = line.strip()
+            if line.lower().startswith("ssid ") and ":" in line:
+                out.append(line.split(":", 1)[1].strip())
+        return _dedup(out)
+
+
 # --------------------------------------------------------------------------- #
 #  Backend selection + public API (delegates to the active backend)
 # --------------------------------------------------------------------------- #
@@ -333,6 +455,8 @@ if IS_MAC:
     _backend = _DarwinBackend()
 elif IS_LINUX:
     _backend = _LinuxBackend()
+elif IS_WINDOWS:
+    _backend = _WindowsBackend()
 else:
     _backend = None  # other platforms: only is_camera_reachable() works
 

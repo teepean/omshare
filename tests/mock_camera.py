@@ -25,6 +25,21 @@ def _fake_jpeg(size: int) -> bytes:
     return body[:size]
 
 
+def _real_jpeg() -> bytes:
+    """A small but genuinely decodable JPEG (for thumbnail/icon tests)."""
+    try:
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (160, 120), (80, 120, 160)).save(buf, format="JPEG")
+        return buf.getvalue()
+    except Exception:
+        return _fake_jpeg(8000)
+
+
+_THUMB = _real_jpeg()
+
+
 FILES = {
     "/DCIM/100OLYMP/P1010042.JPG": _fake_jpeg(120000),
     "/DCIM/100OLYMP/P1010043.ORF": _fake_jpeg(15000000),
@@ -94,7 +109,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self._send(body.encode("utf-8"), "text/plain")
         elif path == "/get_thumbnail.cgi":
-            self._send(_fake_jpeg(8000), "image/jpeg")
+            self._send(_THUMB, "image/jpeg")
         elif path in FILES:
             self._send(FILES[path], "image/jpeg")
         else:

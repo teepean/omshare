@@ -12,6 +12,29 @@ def test_linux_terse_split():
                                                    "disconnected", "My:Net"]
 
 
+def test_windows_interface_parser():
+    sample = (
+        "There is 1 interface on the system:\n\n"
+        "    Name                   : Wi-Fi\n"
+        "    Description            : Intel(R) Wireless-AC\n"
+        "    State                  : connected\n"
+        "    SSID                   : E-M10II-ABC123\n"
+    )
+    devs = w._WindowsBackend.parse_interfaces(sample)
+    assert len(devs) == 1
+    assert devs[0].device == "Wi-Fi"
+    assert devs[0].state == "connected"
+    assert devs[0].connection == "E-M10II-ABC123"
+
+
+def test_windows_profile_xml_escapes_and_is_wpa2():
+    xml = w.windows_profile_xml("My Cam", "p@ss&<>\"")
+    assert "<name>My Cam</name>" in xml
+    assert "WPA2PSK" in xml and "AES" in xml
+    # special characters are XML-escaped in the key material
+    assert "p@ss&amp;&lt;&gt;" in xml
+
+
 def test_macos_hardware_port_parser():
     sample = (
         "Hardware Port: Ethernet\nDevice: en0\n\n"

@@ -1,18 +1,23 @@
-# omshare — OLYMPUS Image Share for Linux & macOS (download-focused)
+# omshare — OLYMPUS Image Share for Linux, macOS & Windows
 
-A command-line replacement for **OLYMPUS Image Share (OI.Share)** that runs on
-**Linux and macOS (including Apple Silicon — M1/M2/M3/M4/M5)**, aimed at the
-thing that matters most when the phone app stops working: **getting your photos
-and videos off the camera over WiFi.**
+A **GUI and command-line** replacement for **OLYMPUS Image Share (OI.Share)**
+that runs on **Linux, macOS (incl. Apple Silicon M1–M5), and Windows**, aimed at
+the thing that matters most when the phone app stops working: **getting your
+photos and videos off the camera over WiFi.**
 
-It also supports remote shutter, clock sync, and power-off.
+- **GUI** — a thumbnail browser: connect, browse the card, filter by format
+  (JPEG / RAW / Video), pick photos (or “Download all”), watch progress.
+- **CLI** — scriptable: `omshare download`, with filters, resume, set-clock,
+  remote shutter, power-off.
 
-WiFi is handled per-platform automatically: **NetworkManager (`nmcli`) on
-Linux**, **`networksetup` on macOS**. Everything else (the HTTP/CGI protocol,
-download logic, CLI) is pure Python and identical on both.
+WiFi is handled per-platform automatically: **`nmcli` on Linux**,
+**`networksetup` on macOS**, **`netsh wlan` on Windows**. Everything else (the
+HTTP/CGI protocol, download logic, GUI) is pure Python and identical on all three.
 
 Tested protocol target: **Olympus OM-D E-M10 Mark II** (works with most OM-D /
-PEN / TG cameras, since it queries the camera for its own command list).
+PEN / TG cameras, since it queries the camera for its own command list). Both
+**JPEG and ORF (RAW)** files — including RAW+JPEG pairs — are listed and
+downloaded; RAW files show a camera-generated JPEG thumbnail in the GUI.
 
 ## How it works
 
@@ -20,9 +25,9 @@ An Olympus camera in WiFi mode is a **WiFi access point** at the fixed address
 `192.168.0.10` running a plain HTTP/CGI server — no encryption, no login token.
 This tool:
 
-1. Joins the camera's WiFi access point with **NetworkManager** (`nmcli`),
-   without hijacking your default route, so your wired/other internet keeps
-   working.
+1. Joins the camera's WiFi access point using the OS's native tooling
+   (`nmcli` / `networksetup` / `netsh`), trying not to hijack your default route
+   so your wired/other internet keeps working.
 2. Speaks the camera's HTTP/CGI protocol (via the MIT-licensed
    [`olympuswifi`](https://github.com/joergmlpts/olympus-wifi) library) to list
    and download files.
@@ -37,6 +42,8 @@ Because the camera *is* the access point, the computer running this tool needs a
 
 - **macOS:** any Mac with built-in Wi-Fi works out of the box (MacBooks, iMac,
   Mac mini, Mac Studio, Mac Pro). Check with `networksetup -listallhardwareports`.
+- **Windows:** any laptop/desktop with a Wi-Fi adapter. Check with
+  `netsh wlan show interfaces`.
 - **Linux:** a desktop with only ethernet won't work — use a laptop with WiFi or
   a cheap USB WiFi adapter. Check with `nmcli device status`.
 
@@ -47,12 +54,33 @@ git clone https://github.com/teepean/omshare
 cd omshare
 python3 -m venv .venv
 . .venv/bin/activate
-pip install .          # pulls in olympuswifi + requests from PyPI
+pip install ".[gui]"     # GUI + CLI  (use 'pip install .' for CLI only)
 ```
 
+This pulls in `olympuswifi` + `requests` (and `PySide6` for the GUI) from PyPI.
 The protocol layer is the MIT-licensed
-[`olympuswifi`](https://github.com/joergmlpts/olympus-wifi) package, installed
-automatically as a dependency.
+[`olympuswifi`](https://github.com/joergmlpts/olympus-wifi) package.
+
+## GUI
+
+```bash
+omshare-gui
+```
+
+Enter the camera's WiFi SSID + password (shown on the camera) and click
+**Connect** — the grid fills with thumbnails. Use the **Show: JPEG / RAW / Video**
+checkboxes to filter, select photos (or **Download all**), and pick a destination
+folder. Already-downloaded files are skipped, so you can re-run anytime.
+
+### Build a double-clickable app
+
+You chose "both app + command", so there are build scripts (run them on the
+target OS — a `.app`/`.exe` can only be built on that OS):
+
+```bash
+./packaging/build-macos-app.sh      # macOS  -> dist/omshare.app
+.\packaging\build-windows.ps1       # Windows -> dist\omshare\omshare.exe
+```
 
 On macOS, the first `omshare connect` may pop a system prompt asking permission
 to change network settings / use the keychain — approve it. The wired connection
