@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omshare"
+version = "0.2.0"
+description = "Command-line OLYMPUS Image Share (OI.Share) for Linux and macOS (incl. Apple Silicon) — download photos/videos from Olympus/OM-D/PEN/TG cameras over WiFi."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "teepean" }]
+keywords = ["olympus", "om-system", "oishare", "camera", "wifi", "download"]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Capture :: Digital Camera",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "olympuswifi",   # the protocol implementation (joergmlpts/olympus-wifi)
+    "requests",
+]
+
+[project.urls]
+Homepage = "https://github.com/teepean/omshare"
+Repository = "https://github.com/teepean/omshare"
+
+[project.scripts]
+omshare = "omshare.cli:main"
+
+[tool.setuptools]
+packages = ["omshare"]
